@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<title>LittleVGL Screen</title>
+</head>
+
+<script language="javascript" type="text/javascript">
+
+var canvas;
+var context;
+var imageData;
+var width;
+var height;
+
+function init() {
+	canvas = document.getElementById("canvas");
+	context = canvas.getContext("2d")
+	width = canvas.width;
+	height = canvas.height;
+	imageData = context.getImageData(0, 0, width, height);
+
+	wsConnect();
+}
+
+function wsConnect() {
+	websocket = new WebSocket('ws://'+location.hostname+'/');
+	websocket.binaryType = "arraybuffer";
+	websocket.onopen = function(evt) { onOpen(evt) };
+	websocket.onclose = function(evt) { onClose(evt) };
+	websocket.onmessage = function(evt) { onMessage(evt) };
+	websocket.onerror = function(evt) { onError(evt) };
+}
+
+function onOpen(evt) {
+	console.log("Connected");
+}
+
+function onClose(evt) {
+	console.log("Disconnected");
+	setTimeout(function() { wsConnect() }, 2000);
+}
+
+function onMessage(evt) {
+	var buffer = evt.data;
+	var header = new Uint8Array(buffer, 0, 8);
+	var pixels = new Uint8Array(buffer, 8, buffer.length-8);
+	var x1 = (header[0] << 8) | header[1];
+	var y1 = (header[2] << 8) | header[3];
+	var x2 = (header[4] << 8) | header[5];
+	var y2 = (header[6] << 8) | header[7];
+	var pixelIndex = 0;
+
+	for (var x=x1; x<=x2; x++) {
+		for (var y=y1; y<=y2; y++) {
+			var canvasIndex = (y * width + x) * 4;"
+			imageData.data[canvasIndex    ] = pixels[pixelIndex++];
+			imageData.data[canvasIndex + 1] = pixels[pixelIndex++];
+			imageData.data[canvasIndex + 2] = pixels[pixelIndex++];
+			imageData.data[canvasIndex + 3] = pixels[pixelIndex++];
+		}
+	}
+	context.putImageData(imageData, 0, 0);
+}
+
+function onError(evt) {
+    console.log("ERROR: " + evt.data);
+}
+
+window.addEventListener("load", init, false);
+</script>
+
+<body>
+	<canvas id="canvas" width="480" height="320"></canvas>
+</body>
+</html>
