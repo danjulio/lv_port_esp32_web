@@ -54,9 +54,13 @@ void app_main() {
 
 	websocket_driver_init();
 
-    static lv_color_t buf1[DISP_BUF_SIZE];
-    static lv_color_t buf2[DISP_BUF_SIZE];
+    static lv_color_t* buf1;
+    static lv_color_t* buf2;
     static lv_disp_buf_t disp_buf;
+    
+    // LVGL Display buffers
+    buf1 = (lv_color_t *) malloc(DISP_BUF_SIZE * sizeof(lv_color_t));
+    buf2 = (lv_color_t *) malloc(DISP_BUF_SIZE * sizeof(lv_color_t));
     lv_disp_buf_init(&disp_buf, buf1, buf2, DISP_BUF_SIZE);
 
 	// Output
@@ -77,9 +81,14 @@ void app_main() {
 
     demo_create();
 
+	// Evaluate LVGL while there is something to display on
     while (1) {
-        vTaskDelay(1);
-        lv_task_handler();
+    	if (websocket_driver_available()) {
+        	vTaskDelay(1);
+        	lv_task_handler();
+        } else {
+        	vTaskDelay(100 / portTICK_RATE_MS);
+        }
     }
 }
 
@@ -88,7 +97,7 @@ void app_main() {
  *   STATIC FUNCTIONS
  **********************/
 
-static esp_err_t event_handler(void* ctx, system_event_t* event) {
+static esp_err_t wifi_event_handler(void* ctx, system_event_t* event) {
 	switch(event->event_id) {
 		case SYSTEM_EVENT_AP_START:
 			ESP_LOGI(TAG,"Access Point Started");
@@ -144,7 +153,7 @@ static void wifi_setup() {
 	ESP_ERROR_CHECK(tcpip_adapter_dhcps_start(TCPIP_ADAPTER_IF_AP));
 	
 	ESP_LOGI(TAG,"starting event loop");
-	ESP_ERROR_CHECK(esp_event_loop_init(event_handler, NULL));
+	ESP_ERROR_CHECK(esp_event_loop_init(wifi_event_handler, NULL));
 
 	ESP_LOGI(TAG,"initializing WiFi");
 	wifi_init_config_t wifi_init_config = WIFI_INIT_CONFIG_DEFAULT();
@@ -163,7 +172,7 @@ static void wifi_setup() {
 			.beacon_interval = 100
 		}
 	};
-	if (strlen(wifi_config.pw) == 0) {
+	if (strlen(AP_PSSWD) == 0) {
     	wifi_config.ap.authmode = WIFI_AUTH_OPEN;
     }
 

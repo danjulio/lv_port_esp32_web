@@ -20,18 +20,20 @@ extern "C" {
  *********************/
 #include <stdint.h>
 #include <stdbool.h>
+#include "lvgl/lvgl.h"
 
 
 /*********************
 *      DEFINES
 *********************/
-
+#define DISP_BUF_SIZE (LV_HOR_RES_MAX * 16)
 
 
 /**********************
  * GLOBAL PROTOTYPES
  **********************/
 void websocket_driver_init();
+bool websocket_driver_available();
 void websocket_driver_flush(lv_disp_drv_t * drv, const lv_area_t * area, lv_color_t * color_map);
 bool websocket_driver_read(lv_indev_drv_t * drv, lv_indev_data_t * data);
 

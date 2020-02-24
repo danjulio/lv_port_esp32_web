@@ -13,13 +13,31 @@ var imageData;
 var width;
 var height;
 
+var websocket;
+var ws_connected;
+
+var pointerDown;
+var canvas_left;
+var canvas_top;
+
 function init() {
 	canvas = document.getElementById("canvas");
 	context = canvas.getContext("2d")
 	width = canvas.width;
 	height = canvas.height;
+	context.fillStyle = "black";
+	context.fillRect(0, 0, width, height);
 	imageData = context.getImageData(0, 0, width, height);
+	
+	pointerDown = false;
+	const rect = canvas.getBoundingClientRect();
+	canvas_left = rect.left;
+	canvas_top = rect.top;
+	canvas.addEventListener('mousedown', onMouseDown);
+	canvas.addEventListener('mousemove', onMouseMove);
+	canvas.addEventListener('mouseup', onMouseUp);
 
+	ws_connected = false;
 	wsConnect();
 }
 
@@ -32,32 +50,62 @@ function wsConnect() {
 	websocket.onerror = function(evt) { onError(evt) };
 }
 
+function wsSend(state, x, y) {
+	if (ws_connected) {
+		var mouse_packet = new Uint8Array(5);
+		
+		mouse_packet[0] = state;
+		mouse_packet[1] = (x >> 8) & 0xFF;
+		mouse_packet[2] = x & 0xFF;
+		mouse_packet[3] = (y >> 8) & 0xFF;
+		mouse_packet[4] = y & 0xFF;
+		
+		websocket.send(mouse_packet);
+	}
+}
+
 function onOpen(evt) {
 	console.log("Connected");
+	ws_connected = true;
 }
 
 function onClose(evt) {
 	console.log("Disconnected");
+	ws_connected = false;
 	setTimeout(function() { wsConnect() }, 2000);
 }
 
 function onMessage(evt) {
 	var buffer = evt.data;
-	var header = new Uint8Array(buffer, 0, 8);
-	var pixels = new Uint8Array(buffer, 8, buffer.length-8);
-	var x1 = (header[0] << 8) | header[1];
-	var y1 = (header[2] << 8) | header[3];
-	var x2 = (header[4] << 8) | header[5];
-	var y2 = (header[6] << 8) | header[7];
+	var header = new Uint8Array(buffer, 0, 9);
+	var pixels = new Uint8Array(buffer, 9);
+	var pixel_depth_32 = header[0];
+	var x1 = (header[1] << 8) | header[2];
+	var y1 = (header[3] << 8) | header[4];
+	var x2 = (header[5] << 8) | header[6];
+	var y2 = (header[7] << 8) | header[8];
 	var pixelIndex = 0;
 
-	for (var x=x1; x<=x2; x++) {
+	if (pixel_depth_32 == 1) {
 		for (var y=y1; y<=y2; y++) {
-			var canvasIndex = (y * width + x) * 4;"
-			imageData.data[canvasIndex    ] = pixels[pixelIndex++];
-			imageData.data[canvasIndex + 1] = pixels[pixelIndex++];
-			imageData.data[canvasIndex + 2] = pixels[pixelIndex++];
-			imageData.data[canvasIndex + 3] = pixels[pixelIndex++];
+			for (var x=x1; x<=x2; x++) {
+				var canvasIndex = (y * width + x) * 4;
+				imageData.data[canvasIndex    ] = pixels[pixelIndex++];
+				imageData.data[canvasIndex + 1] = pixels[pixelIndex++];
+				imageData.data[canvasIndex + 2] = pixels[pixelIndex++];
+				imageData.data[canvasIndex + 3] = pixels[pixelIndex++];
+			}
+		}
+	} else {
+		for (var y=y1; y<=y2; y++) {
+			for (var x=x1; x<=x2; x++) {
+				var canvasIndex = (y * width + x) * 4;
+				var c16 = (pixels[pixelIndex++] << 8) | pixels[pixelIndex++];
+				imageData.data[canvasIndex    ] = (c16 & 0xF800) >> 8;
+				imageData.data[canvasIndex + 1] = (c16 & 0x07E0) >> 3;
+				imageData.data[canvasIndex + 2] = (c16 & 0x001F) << 3;
+				imageData.data[canvasIndex + 3] = 255;
+			}
 		}
 	}
 	context.putImageData(imageData, 0, 0);
@@ -65,6 +113,28 @@ function onMessage(evt) {
 
 function onError(evt) {
     console.log("ERROR: " + evt.data);
+}
+
+function onMouseDown(evt) {
+	pointerDown = true;
+	var x = evt.clientX - canvas_left;
+	var y = evt.clientY - canvas_top;
+	wsSend(1, x, y);
+}
+
+function onMouseMove(evt) {
+	if (pointerDown) {
+		var x = evt.clientX - canvas_left;
+		var y = evt.clientY - canvas_top;
+		wsSend(1, x, y);
+	}
+}
+
+function onMouseUp(evt) {
+	pointerDown = false;
+	var x = evt.clientX - canvas_left;
+	var y = evt.clientY - canvas_top;
+	wsSend(0, x, y);
 }
 
 window.addEventListener("load", init, false);

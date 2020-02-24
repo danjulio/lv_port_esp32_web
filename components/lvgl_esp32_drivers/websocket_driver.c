@@ -18,6 +18,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "lwip/api.h"
 #include "lvgl.h"
 #include "string.h"
@@ -25,10 +26,34 @@
 
 
 /**********************
+ *      TYPEDEFS
+ **********************/
+typedef struct
+{
+	SemaphoreHandle_t mutex;
+	uint8_t flag;
+	uint16_t x;
+	uint16_t y;
+} pointer_t;
+
+
+/**********************
  *  STATIC VARIABLES
  **********************/
+static const char* TAG = "websocket_driver";
+ 
 // Connection state
 static bool websocket_connected = false;
+
+// Inner-task queue
+static QueueHandle_t client_queue;
+const static int client_queue_size = 10;
+
+// Pre-allocated pixel buffer
+static uint8_t pixel_buf[DISP_BUF_SIZE * sizeof(lv_color_t) + 9];
+
+// Current pointer value
+static pointer_t pointer;
 
 
 /**********************
@@ -45,49 +70,78 @@ static void server_handle_task(void* pvParameters);
  **********************/
 void websocket_driver_init()
 {
+	ESP_LOGI(TAG, "Initialization.");
+	
 	ws_server_start();
 	xTaskCreate(&server_task, "server_task", 3000, NULL, 9, NULL);
 	xTaskCreate(&server_handle_task, "server_handle_task", 4000, NULL, 6, NULL);
+	
+	pointer.mutex = xSemaphoreCreateMutex();
+	pointer.flag = 0;
+	pointer.x = 0;
+	pointer.y = 0;
+}
+
+
+bool websocket_driver_available()
+{
+	return websocket_connected;
 }
 
 
 void websocket_driver_flush(lv_disp_drv_t * drv, const lv_area_t * area, lv_color_t * color_map)
 {
 	int i;
+	uint8_t* buf;
+	uint8_t pixel_depth_32;
 	uint32_t size;
-	uint8_t* buf, bufP;
 	
 	if (websocket_connected) {
+#if LV_COLOR_DEPTH == 32
+		pixel_depth_32 = 1;
+#else
+		pixel_depth_32 = 0;
+#endif
+
 		size = lv_area_get_width(area) * lv_area_get_height(area);
-		buf = malloc(size + 8);
+
+		buf = pixel_buf;
 		if (buf != NULL) {
 			// Create a binary message containing the coordinates and 32-bit pixel
 			// data.  This must match the javascript unpacking routine in index.html.
 			// This way we don't have to worry about endianness.
 			//
 			// Load the region coordinates
-			buf[0] = (area->x1 >> 8) & 0xFF;
-			buf[1] =  area->x1       & 0xFF;
-			buf[2] = (area->y1 >> 8) & 0xFF;
-			buf[3] =  area->y1       & 0xFF;
-			buf[4] = (area->x2 >> 8) & 0xFF;
-			buf[5] =  area->x2       & 0xFF;
-			buf[6] = (area->y2 >> 8) & 0xFF;
-			buf[7] =  area->y2       & 0xFF;
+			*buf++ = pixel_depth_32;
+			*buf++ = (area->x1 >> 8) & 0xFF;
+			*buf++ =  area->x1       & 0xFF;
+			*buf++ = (area->y1 >> 8) & 0xFF;
+			*buf++ =  area->y1       & 0xFF;
+			*buf++ = (area->x2 >> 8) & 0xFF;
+			*buf++ =  area->x2       & 0xFF;
+			*buf++ = (area->y2 >> 8) & 0xFF;
+			*buf++ =  area->y2       & 0xFF;
 			
-			// Load the pixel data: RGBA
-			bufP = &buf[8];
-			for (i=0; i<size; i++) {
-				*bufP++ = color_map[i].red;
-				*bufP++ = color_map[i].green;
-				*bufP++ = color_map[i].blue;
-				*bufP++ = color_map[i].alpha;
+			if (pixel_depth_32 == 1) {
+				// Load the 32-bit pixel data: RGBA8888
+				lv_color32_t* p32 = (lv_color32_t*) color_map;
+				for (i=0; i<size; i++) {
+					*buf++ = p32[i].ch.red;
+					*buf++ = p32[i].ch.green;
+					*buf++ = p32[i].ch.blue;
+					*buf++ = p32[i].ch.alpha;
+				}
+			} else {
+				// Load the 16-bit pixel data: RGB565
+				lv_color16_t* p16 = (lv_color16_t*) color_map;
+				for (i=0; i<size; i++) {
+					*buf++ = p16[i].full >> 8;
+					*buf++ = p16[i].full & 0xFF;
+				}
 			}
 			
 			// Send the buffer to the web page for display
-			i = ws_server_send_text_all((char *) buf, (uint64_t) size);
-			
-			free(buf);
+			i = ws_server_send_bin_all((char *) pixel_buf, (uint64_t) size * sizeof(lv_color_t) + 9);
 		}
 	}
 	
@@ -97,6 +151,12 @@ void websocket_driver_flush(lv_disp_drv_t * drv, const lv_area_t * area, lv_colo
 
 bool websocket_driver_read(lv_indev_drv_t * drv, lv_indev_data_t * data)
 {
+	xSemaphoreTake(pointer.mutex, portMAX_DELAY);
+	data->point.x = (int16_t) pointer.x;
+	data->point.y = (int16_t) pointer.y;
+	data->state = (pointer.flag == 0) ? LV_INDEV_STATE_REL : LV_INDEV_STATE_PR;
+	xSemaphoreGive(pointer.mutex);
+	
 	return false;
 }
 
@@ -107,38 +167,35 @@ bool websocket_driver_read(lv_indev_drv_t * drv, lv_indev_data_t * data)
 // handles websocket events
 void websocket_callback(uint8_t num, WEBSOCKET_TYPE_t type, char* msg, uint64_t len) {
 	const static char* TAG = "websocket_callback";
-	int value;
 
 	switch(type) {
 		case WEBSOCKET_CONNECT:
-			ESP_LOGI(TAG,"client %i connected!", num);
+			ESP_LOGI(TAG, "client %i connected!", num);
 			websocket_connected = true;
 			break;
 		case WEBSOCKET_DISCONNECT_EXTERNAL:
-			ESP_LOGI(TAG,"client %i sent a disconnect message", num);
+			ESP_LOGI(TAG, "client %i sent a disconnect message", num);
 			websocket_connected = false;
 			break;
 		case WEBSOCKET_DISCONNECT_INTERNAL:
-			ESP_LOGI(TAG,"client %i was disconnected", num);
+			ESP_LOGI(TAG, "client %i was disconnected", num);
 			websocket_connected = false;
 			break;
 		case WEBSOCKET_DISCONNECT_ERROR:
-			ESP_LOGI(TAG,"client %i was disconnected due to an error", num);
-			websocket_connected = false;);
-			break;
-		case WEBSOCKET_TEXT:
-			if(len) { // if the message length was greater than zero
-				ESP_LOGI(TAG, "client %i sent text of size %i:\n%s", len, msg);
-			}
+			ESP_LOGI(TAG, "client %i was disconnected due to an error", num);
+			websocket_connected = false;
 			break;
 		case WEBSOCKET_BIN:
-			ESP_LOGI(TAG,"client %i sent binary message of size %i:\n%s", num,(uint32_t) len, msg);
+			if ((uint32_t) len == 5) {
+				xSemaphoreTake(pointer.mutex, portMAX_DELAY);
+				pointer.flag = (uint8_t) msg[0];
+				pointer.x = ((uint8_t) msg[1] << 8) | (uint8_t) msg[2];
+				pointer.y = ((uint8_t) msg[3] << 8) | (uint8_t) msg[4];
+				xSemaphoreGive(pointer.mutex);
+			}
 			break;
-		case WEBSOCKET_PING:
-			ESP_LOGI(TAG,"client %i pinged us with message of size %i:\n%s", num, (uint32_t) len, msg);
-			break;
-		case WEBSOCKET_PONG:
-			ESP_LOGI(TAG,"client %i responded to the ping", num);
+		default:
+			ESP_LOGI(TAG, "client %i send unhandled websocket type %d", num, type);
 			break;
 	}
 }
@@ -147,6 +204,7 @@ void websocket_callback(uint8_t num, WEBSOCKET_TYPE_t type, char* msg, uint64_t 
 static void http_serve(struct netconn *conn) {
 	const static char* TAG = "http_server";
 	const static char HTML_HEADER[] = "HTTP/1.1 200 OK\nContent-type: text/html\n\n";
+	const static char ICO_HEADER[] = "HTTP/1.1 200 OK\nContent-type: image/x-icon\n\n";
 
 	struct netbuf* inbuf;
 	static char* buf;
@@ -157,6 +215,11 @@ static void http_serve(struct netconn *conn) {
 	extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 	extern const uint8_t index_html_end[] asm("_binary_index_html_end");
 	const uint32_t index_html_len = index_html_end - index_html_start;
+	
+	// favicon.ico (automatically requested by browsers from the "root directory")
+	extern const uint8_t favicon_ico_start[] asm("_binary_favicon_ico_start");
+	extern const uint8_t favicon_ico_end[] asm("_binary_favicon_ico_end");
+	const uint32_t favicon_ico_len = favicon_ico_end - favicon_ico_start;
 
 	netconn_set_recvtimeout(conn,1000); // allow a connection timeout of 1 second
 	ESP_LOGI(TAG, "reading from client...");
@@ -172,7 +235,7 @@ static void http_serve(struct netconn *conn) {
 				
 				ESP_LOGI(TAG,"Sending /");
 				netconn_write(conn, HTML_HEADER, sizeof(HTML_HEADER)-1,NETCONN_NOCOPY);
-				netconn_write(conn, root_html_start,root_html_len,NETCONN_NOCOPY);
+				netconn_write(conn, index_html_start, index_html_len, NETCONN_NOCOPY);
 				netconn_close(conn);
 				netconn_delete(conn);
 				netbuf_delete(inbuf);
@@ -182,7 +245,16 @@ static void http_serve(struct netconn *conn) {
 			else if (strstr(buf,"GET / ")
 					 && strstr(buf,"Upgrade: websocket")) {
 				ESP_LOGI(TAG,"Requesting websocket on /");
-				ws_server_add_client(conn,buf,buflen,"/",websocket_callback);
+				ws_server_add_client(conn, buf, buflen, "/", websocket_callback);
+				netbuf_delete(inbuf);
+			}
+			
+			else if(strstr(buf,"GET /favicon.ico ")) {
+				ESP_LOGI(TAG,"Sending favicon.ico");
+				netconn_write(conn,ICO_HEADER,sizeof(ICO_HEADER)-1,NETCONN_NOCOPY);
+				netconn_write(conn,favicon_ico_start,favicon_ico_len,NETCONN_NOCOPY);
+				netconn_close(conn);
+				netconn_delete(conn);
 				netbuf_delete(inbuf);
 			}
 
