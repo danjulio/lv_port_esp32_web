@@ -24,9 +24,9 @@ This program is free software: you can redistribute it and/or modify
 #include "freertos/queue.h"
 #include <string.h>
 
-static SemaphoreHandle_t xwebsocket_mutex; // to lock the client array
+SemaphoreHandle_t xwebsocket_mutex; // to lock the client array
 static QueueHandle_t xwebsocket_queue; // to hold the clients that send messages
-static ws_client_t clients[WEBSOCKET_SERVER_MAX_CLIENTS]; // holds list of clients
+ws_client_t clients[WEBSOCKET_SERVER_MAX_CLIENTS]; // holds list of clients
 static TaskHandle_t xtask; // the task itself
 
 static void background_callback(struct netconn* conn, enum netconn_evt evt,u16_t len) {
@@ -366,6 +366,44 @@ int ws_server_send_text_all_from_callback(char* msg,uint64_t len) {
   for(int i=0;i<WEBSOCKET_SERVER_MAX_CLIENTS;i++) {
     if(ws_is_connected(clients[i])) {
       err = ws_send(&clients[i],WEBSOCKET_OPCODE_TEXT,msg,len,0);
+      if(!err) ret += 1;
+      else {
+        clients[i].scallback(i,WEBSOCKET_DISCONNECT_ERROR,NULL,0);
+        ws_disconnect_client(&clients[i], 0);
+      }
+    }
+  }
+  return ret;
+}
+
+int ws_server_send_bin_client_from_callback(int num,char* msg,uint64_t len)
+{
+  int ret = 0;
+  int err;
+  if(ws_is_connected(clients[num])) {
+    err = ws_send(&clients[num],WEBSOCKET_OPCODE_BIN,msg,len,0);
+    ret = 1;
+    if(err) {
+      clients[num].scallback(num,WEBSOCKET_DISCONNECT_ERROR,NULL,0);
+      ws_disconnect_client(&clients[num], 0);
+      ret = 0;
+    }
+  }
+  return ret;
+}
+
+int ws_server_send_bin_clients_from_callback(char* url,char* msg,uint64_t len)
+{
+  int ret = 0;
+  int err;
+
+  if(url == NULL) {
+    return ret;
+  }
+
+  for(int i=0;i<WEBSOCKET_SERVER_MAX_CLIENTS;i++) {
+    if(clients[i].url != NULL && ws_is_connected(clients[i]) && !strcmp(clients[i].url,url)) {
+      err = ws_send(&clients[i],WEBSOCKET_OPCODE_BIN,msg,len,0);
       if(!err) ret += 1;
       else {
         clients[i].scallback(i,WEBSOCKET_DISCONNECT_ERROR,NULL,0);

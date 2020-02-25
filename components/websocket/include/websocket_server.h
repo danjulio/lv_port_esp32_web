@@ -36,6 +36,10 @@ extern "C" {
 #define WEBSOCKET_SERVER_PINNED_CORE CONFIG_WEBSOCKET_SERVER_PINNED_CORE
 #endif
 
+// Externs for code to access the internals
+extern SemaphoreHandle_t xwebsocket_mutex;
+extern ws_client_t clients[WEBSOCKET_SERVER_MAX_CLIENTS];
+
 // starts the server
 int ws_server_start();
 
@@ -83,6 +87,8 @@ int ws_server_send_text_client_from_callback(int num,char* msg,uint64_t len); //
 int ws_server_send_text_clients_from_callback(char* url,char* msg,uint64_t len); // sends text to all clients with the set number
 int ws_server_send_text_all_from_callback(char* msg,uint64_t len); // sends text to all clients
 
+int ws_server_send_bin_client_from_callback(int num,char* msg,uint64_t len);
+int ws_server_send_bin_clients_from_callback(char* url,char* msg,uint64_t len);
 int ws_server_send_bin_all_from_callback(char* msg,uint64_t len);
 
 int ws_server_ping(); // sends a ping to all connected clients
