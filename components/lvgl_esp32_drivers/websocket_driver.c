@@ -269,7 +269,6 @@ static void http_serve(struct netconn *conn) {
 	if(err == ERR_OK) {
 		netbuf_data(inbuf, (void**)&buf, &buflen);
 		if (buf) {
-
 			// default page
 			if (strstr(buf, "GET / ")
 				&& !strstr(buf, "Upgrade: websocket")) {

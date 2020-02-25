@@ -1,4 +1,4 @@
-/* SPI Master example
+/* Websocket demo example
 
    This example code is in the Public Domain (or CC0 licensed, at your option.)
 
