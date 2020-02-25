@@ -34,7 +34,7 @@
 /**********************
  *  STATIC VARIABLES
  **********************/
-const char* TAG = "main";
+
 
 
 /**********************
@@ -98,6 +98,8 @@ void app_main() {
  **********************/
 
 static esp_err_t wifi_event_handler(void* ctx, system_event_t* event) {
+	const char* TAG = "wifi_event_handler";
+	
 	switch(event->event_id) {
 		case SYSTEM_EVENT_AP_START:
 			ESP_LOGI(TAG,"Access Point Started");
@@ -136,6 +138,8 @@ static esp_err_t wifi_event_handler(void* ctx, system_event_t* event) {
 
 
 static void wifi_setup() {
+	const char* TAG = "wifi_setup";
+	
 	ESP_LOGI(TAG,"starting tcpip adapter");
 	tcpip_adapter_init();
 	nvs_flash_init();
