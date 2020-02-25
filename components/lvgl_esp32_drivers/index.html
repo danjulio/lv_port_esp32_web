@@ -25,17 +25,23 @@ function init() {
 	context = canvas.getContext("2d")
 	width = canvas.width;
 	height = canvas.height;
-	context.fillStyle = "black";
-	context.fillRect(0, 0, width, height);
-	imageData = context.getImageData(0, 0, width, height);
 	
 	pointerDown = false;
 	const rect = canvas.getBoundingClientRect();
 	canvas_left = rect.left;
 	canvas_top = rect.top;
-	canvas.addEventListener('mousedown', onMouseDown);
-	canvas.addEventListener('mousemove', onMouseMove);
-	canvas.addEventListener('mouseup', onMouseUp);
+	if (window.PointerEvent) {
+		canvas.addEventListener('pointerdown', onPointerDown);
+		canvas.addEventListener('pointermove', onPointerMove);
+		canvas.addEventListener('pointerup', onPointerUp);
+		canvas.addEventListener('pointerleave', onPointerUp);
+		canvas.addEventListener('pointercancel', onPointerUp);
+	} else {
+		canvas.addEventListener('mousedown', onPointerDown);
+		canvas.addEventListener('mousemove', onPointerMove);
+		canvas.addEventListener('mouseup', onPointerUp);
+		canvas.addEventListener('mouseleave', onPointerUp);
+	}
 
 	ws_connected = false;
 	wsConnect();
@@ -77,16 +83,29 @@ function onClose(evt) {
 
 function onMessage(evt) {
 	var buffer = evt.data;
-	var header = new Uint8Array(buffer, 0, 9);
-	var pixels = new Uint8Array(buffer, 9);
-	var pixel_depth_32 = header[0];
-	var x1 = (header[1] << 8) | header[2];
-	var y1 = (header[3] << 8) | header[4];
-	var x2 = (header[5] << 8) | header[6];
-	var y2 = (header[7] << 8) | header[8];
+	var header = new Uint8Array(buffer, 0, 13);
+	var pixels = new Uint8Array(buffer, 13);
+	var pixel_depth = header[0];
+	var w  = (header[1] << 8) | header[2];
+	var h  = (header[3] << 8) | header[4];
+	var x1 = (header[5] << 8) | header[6];
+	var y1 = (header[7] << 8) | header[8];
+	var x2 = (header[9] << 8) | header[10];
+	var y2 = (header[11] << 8) | header[12];
 	var pixelIndex = 0;
+	
+	if ((w != width) || (h != height)) {
+		canvas.width = w;
+		canvas.height = h;
+		width = w;
+		height = h;
+		
+		context.fillStyle = "black";
+		context.fillRect(0, 0, width, height);
+		imageData = context.getImageData(0, 0, width, height);
+	}
 
-	if (pixel_depth_32 == 1) {
+	if (pixel_depth == 32) {
 		for (var y=y1; y<=y2; y++) {
 			for (var x=x1; x<=x2; x++) {
 				var canvasIndex = (y * width + x) * 4;
@@ -96,7 +115,7 @@ function onMessage(evt) {
 				imageData.data[canvasIndex + 3] = pixels[pixelIndex++];
 			}
 		}
-	} else {
+	} else if (pixel_depth == 16) {
 		for (var y=y1; y<=y2; y++) {
 			for (var x=x1; x<=x2; x++) {
 				var canvasIndex = (y * width + x) * 4;
@@ -107,30 +126,42 @@ function onMessage(evt) {
 				imageData.data[canvasIndex + 3] = 255;
 			}
 		}
+	} else {
+		for (var y=y1; y<=y2; y++) {
+			for (var x=x1; x<=x2; x++) {
+				var canvasIndex = (y * width + x) * 4;
+				var c8 = pixels[pixelIndex++];
+				imageData.data[canvasIndex    ] = (c8 & 0xE0);
+				imageData.data[canvasIndex + 1] = (c8 & 0x1C) << 3;
+				imageData.data[canvasIndex + 2] = (c8 & 0x03) << 6;
+				imageData.data[canvasIndex + 3] = 255;
+			}
+		}
 	}
 	context.putImageData(imageData, 0, 0);
 }
 
 function onError(evt) {
-    console.log("ERROR: " + evt.data);
+    console.log("ERROR: " + evt);
 }
 
-function onMouseDown(evt) {
+function onPointerDown(evt) {
 	pointerDown = true;
 	var x = evt.clientX - canvas_left;
 	var y = evt.clientY - canvas_top;
 	wsSend(1, x, y);
 }
 
-function onMouseMove(evt) {
+function onPointerMove(evt) {
 	if (pointerDown) {
+		evt.preventDefault();
 		var x = evt.clientX - canvas_left;
 		var y = evt.clientY - canvas_top;
 		wsSend(1, x, y);
 	}
 }
 
-function onMouseUp(evt) {
+function onPointerUp(evt) {
 	pointerDown = false;
 	var x = evt.clientX - canvas_left;
 	var y = evt.clientY - canvas_top;
@@ -141,6 +172,6 @@ window.addEventListener("load", init, false);
 </script>
 
 <body>
-	<canvas id="canvas" width="480" height="320"></canvas>
+	<canvas id="canvas" width="1" height="1"></canvas>
 </body>
 </html>
