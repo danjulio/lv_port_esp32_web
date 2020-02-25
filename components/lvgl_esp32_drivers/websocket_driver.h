@@ -26,7 +26,7 @@ extern "C" {
 /*********************
 *      DEFINES
 *********************/
-#define DISP_BUF_SIZE (LV_HOR_RES_MAX * 16)
+#define DISP_BUF_SIZE (LV_HOR_RES_MAX * 30)
 
 
 /**********************
