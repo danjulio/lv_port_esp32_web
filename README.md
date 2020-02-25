@@ -1,319 +1,102 @@
-# LittlevGL project for ESP32
+# LittleVGL ESP32 websocket driver
 
-LittlevGL ported to the ESP32.  
-Supported display controllers:
-- ILI9341
-- ILI9488
-- HX8357B/HX8357D
+A websocket driver allowing LittleVGL to display in a web browser via WiFi.  LittleVGL screen region refreshes are sent via a websocket to a simple web page containing a canvas and mouse/touch events are returned via the websocket back to the ESP32.  Multiple sessions are possible with the display updated on all browsers simultaneously (within memory constraints of the ESP32).
 
-Supported touchscreen controllers:
-- XPT2046
-- FT3236
-- other FT6X36 or the FT6206 controllers should work as well (not tested)
-- STMPE610
+![ESP32 displaying LittleVGL on two browsers](images/esp32_lvgl_web.png)
+
+
+This repository is based on the LittleVGL [ESP32 demo repository](https://github.com/littlevgl/lv_port_esp32) as of early 2020 (lvgl v6.0).
+
+## Wait, WTF!?!, why not just a "real" web page?
+This is not, I admit, the most efficient way to render something on a web browser.  It's noticeably slow when using 32-bit pixels, a background image like the bubbles in the lvgl demo and transparency, but it's not bad when just refreshing controls and provides a way to easily extend your device into web space while using the same awesome GUI library you use for a local LCD display.  In fact, you could write an application that could display the same GUI, using the same code, on a local LCD or a remote web browser.  That's a little useful I think.
+
+If you agree, read on...
 
 ## Get started 
 ### Install the ESP32 SDK
-http://esp-idf.readthedocs.io/en/latest/
 
-Note:
 
-This project is compatible with both the ESP-IDF 3.X branch and the 4.0 branch. For the 4.0 branch, you can use either make or CMake, but CMake is recommended. Instructions here are given for the latest toolchain using `idf.py` (which invokes CMake), but it is easy to translate to make. For example instead of running `idf.py menuconfig`, just run `make menuconfig`.
+This project should be compatible with both the ESP-IDF 3.X branch and the 4.0 branch, although I built with v3.3 and used make. You should also be able to use CMake with the 4.0 branch.
 
-### Build this repository standalone and run the demo.
+Read about installing the ESP32 SDK at their [website](https://esp-idf.readthedocs.io/en/latest/).
 
-Try this first to make sure your hardware is supported, wired and configured properly.
+Read general instructions, including those for the ESP-IDF 4.0 branch at the LittleVGL demo repository above.
 
-1. Get this project: `git clone --recurse-submodules
-https://github.com/littlevgl/lv_port_esp32_ili9341.git`
+#### ESP32 compatibility
+This project should run on any ESP32 board as it requires no peripherals.
 
-2. From its root run `idf.py menuconfig`
+### Build this repository and run the demo.
 
-3. Select your display kit or board and other options - see [config options](#configuration-options)
+Get this project via zip download or git.
+	`git clone --recurse-submodules https://github.com/danjuio/lv_port_esp32_web.git`
 
-4. `idf.py build`
+The project should compile and run on your board with only one change to select your specific serial/com port.
 
-5. `idf.py -p (YOUR PORT) flash` (with make this is just `make flash` - in 3.x PORT is configured in `menuconfig`)
+Change to the project directory and use menuconfig (`make menuconfig` or `idf.py menuconfig`) to set your port.
 
-### Install this project as a library submodule in your own project
+![menuconfig serial flasher config](images/menuconfig_1.png)
 
-It is recommended to install this repo as a submodule in your IDF project's git repo. The configuration system has been designed so that you do not need to copy or edit any files in this repo. By keeping your submodule directory clean you can ensure reproducible builds and easy updates from this upstream repository.
+![menuconfig port selection](images/menuconfig_2.png)
 
-From your project root:
+I also changed from the default download speed of 115200 baud to 921600 baud because the project results in a pretty large binary.
 
-1. `mkdir -p externals`
-2. `git submodule add https://github.com/littlevgl/lv_port_esp32_ili9341.git
-externals/lv_port_esp32_ili9341`
-3. `git submodule update --init --recursive`
-4. Edit your CMake or Makefile to add this repo's components folder to the IDF components path.
+Save the changes and build the project (`make` or `idf.py build`).  Once it has successfully built, load it and run (`make flash monitor` or `idf.py -p (SERIAL PORT) flash` followed by `idf.py -p (SERIAL PORT) monitor`).
 
+You should see a new WiFi appear with an SSID of `web_lvgl`.  Connect to this (default password `password`) and browse to 192.168.4.1.  You should be rewarded by the LVGL Demo screen!
 
-#### CMake
+![LittleVGL in a browser](images/lvgl_browser.png)
 
-The examples below are taken from the ESP-IDF [blink](https://github.com/espressif/esp-idf/tree/master/examples/get-started/blink) example which you can copy and use as the basis for your own project.
-The project root CMakeLists.txt file needs one line added, just before the project to add the extra components directory to the path like this:
 
-```cmake
-#CMakeLists.txt
-cmake_minimum_required(VERSION 3.5)
+## Project notes
+* The driver is contained in `components/lvgl_esp32_drivers/websocket_driver`.
 
-include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+* The webpage `index.html` and a favicon are stored as binary objects in the program and served to requesting browsers from the driver.  See the `component.mk` and `CMakeLists.txt` files in the driver sub-directory.  The webpage is simply a carrier for the javascript that unpacks pixel data for the canvas and packs input events for the driver.
 
-set(EXTRA_COMPONENT_DIRS externals/lv_port_esp32_ili9341/components)
+* The project makes use of a modified copy of Blake Felt's [ESP32 Websocket](https://github.com/Molorius/esp32-websocket).  Many thanks to Blake, not only for his code but for some of the cool techniques he used.  To improve performance (eliminating data copies) I wrote my own binary websocket send function.  To do this I needed access to some variables in his websocket server so I changed those from static to publicly visible.  I also wrote the missing binary websocket send functions in his header file but ended up not using them.
 
-project(blink)
-```
+* The websocket payload sent from the driver to the webpage consists of the following fields.
 
-In the CMakeLists.txt file for your `/main` or for the component(s) using LVGL you need to add REQUIRES directives for this project's driver and lvgl itself to the `idf_component_register` function e.g.
+	```
+	Byte  0: Pixel Depth (8, 16 or 32)
+	Byte  1: Canvas Width[15:8]
+	Byte  2: Canvas Width[7:0]
+	Byte  3: Canvas Height[15:8]
+	Byte  4: Canvas Height[7:0]
+	Byte  5: Redraw Region X1[15:8]
+	Byte  6: Redraw Region X1[7:0]
+	Byte  7: Redraw Region Y1[15:8]
+	Byte  8: Redraw Region Y1[7:0]
+	Byte  9: Redraw Region X2[15:8]
+	Byte 10: Redraw Region X2[7:0]
+	Byte 11: Redraw Region Y2[15:8]
+	Byte 12: Redraw Region Y2[7:0]
+	Byte 13-N: Pixel data (high-byte first for 32- and 16-bit pixels)
+	```
 
-```cmake
-#main/CMakeLists.txt
-idf_component_register(
-    SRCS "blink.c"
-    INCLUDE_DIRS "."
-    REQUIRES lvgl_ili9341 lvgl
-)
-```
+* The websocket payload sent from the webpage to the driver consists of the following fields.
 
-#### Makefile
-If you are using make, you only need to add the EXTRA_COMPONENT_DIRS in the root Makefile of your project:
-```Makefile
-PROJECT_NAME := blink
-EXTRA_COMPONENT_DIRS := externals/lv_port_esp32_ili9341/components
+	```
+	Byte 0: Flag (Touch = 1, Release = 0)
+	Byte 1: Pointer X[15:8]
+	Byte 2: Pointer X[7:0]
+	Byte 3: Pointer Y[15:8]
+	Byte 4: Pointer Y[7:0]
+	```
 
-include $(IDF_PATH)/make/project.mk
-```
+* The driver supports 8-bit, 16-bit, and 32-bit pixels with each increase in pixel depth requiring twice the number pixel data bytes (and corresponding slow-down).  Pixel depth is configured in the LittleVGL configuration file (`components/lvgl/lvgl.conf`).
 
-## Configuration options
-There are a number of configuration options available, all accessed through `idf.py menuconfig` -> Components -> LittlevGL (LVGL).
+* The driver should support any resolution (16-bits).  Resolution is also configured in the LittleVGL configuration file.  This project's resolution is 480x320 pixels.
 
-![Main Menu](images/menu-main.png)
-![Component Menu](images/menu-component.png)
-![Component Menu](images/menu-lvgl.png)
+* The project uses the dual display buffer technique described in the LittleVGL [Display porting guide](https://docs.littlevgl.com/en/html/porting/display.html).  This allows it to prepare one buffer while the other is being displayed.  LittleVGL updates the display in regions that have changed.  The maximum amount of area to be updated at a time is controlled by the `DISP_BUF_SIZE` define in `websocket_driver.h`.  This is very important because it is directly related to a memory buffer that has to exist (I statically allocate this buffer in the driver).  The buffer holds pixels (1, 2 or 4 bytes per pixel).  Too large a value and the ESP32 will crash or the build will fail with a memory-overflow.  The driver currently specifies this as a number of lines.  That means that increasing the display width will increase the memory required.  If things go boom, this is a place to reduce your memory use.
 
-Options include:
- * Display resolution - set the height and width of the display
- * Touch controller present
- * Invert display - if text and objects are backwards, you can enable this
- * Enable backlight control via GPIO (vs hardwiring on)
- * Backlight active high or low - some displays expect a high (1) signal to enable backlight, others expect (low) (default) - if your backlight doesn't come on try switching this
+* The driver supports multiple (current maximum = 4) simultaneously connected browsers.  It will update all and take input from all although sending input from more than one browser at a time will currently confuse the driver (and LittleVGL).  The driver forces LittleVGL to invalidate the screen whenever a new session is attached.  This forces it to repaint the entire screen so the new session has a valid starting point.  The maximum number of supported connections is set by a configuration item in the websocket configuration available from menuconfig.  From the main menuconfig screen, select `Component Config` and then select `Websocket Server`.
 
-### Assign the correct pinout depending on your ESP32 dev board
-There are several development boards based on the ESP32 chip, make sure you assign the correct pin numbers to the signals that interface with the TFT display board. Its recommended to use a predefined configuration below, but you can also set individual pins for both display controller and touch controller.
+![menuconfig websocket server max clients](images/menuconfig_3.png)
 
-![Pins](images/menu-pins.png)
-![Pins](images/menu-pins-tp.png)
+* You can change the title of the web page, for example to set the name of your program, in the `index.html` file.  You can also change the 16x16 pixel favicon using any number of programs to generate a `favicon.ico` file.
 
-### Predefined Display Configurations
+* The way to improve performance is to reduce the amount of redrawing LittleVGL has to do.  8-bit pixels are the fastest but limit you to 256 colors.  16-bit pixels, typically used with low-cost LCD displays, are a bit slower but present a good visual image.  32-bit pixels are possible but you want to eliminate backgrounds and things like animations that cause LittleVGL to have to refresh large portions of the screen at a time.
 
-![Predefines](images/menu-predefined-displays.png)
+## Questions?
 
-For development kits that come with a display already attached, all the correct settings are already known and can be selected in `menuconfig` from the first option "Select predefined display configuration." Once selected all the other options will be defaulted and won't appear in the menu.
-
-Boards we currently have defined this way are:
-
-### ESP-Wrover-Kit v4.1
-
-![Example GUI with LittlevGL on ESP32](images/esp_wrover_kit.jpg)
-
-This board comes with an embedded TFT screen with the **ILI9341** display driver and it doesn't have touch screen. The screen size is 320 x 240 px.
-
-### M5Stack
-
-![Example GUI with LittlevGL on ESP32](images/m5stack.jpg)
-
-This board comes with an embedded TFT screen with the **ILI9341** display driver and it doesn't have touch screen. The screen size is 240 x 320px.
-
-## Predefined Board Pinouts
-
-![Predefines](images/menu-predefined.png)
-
-When wiring the display and touchpad (if applicable) it is best to use the board's designated HSPI and VSPI pins to take advantage of the hardware SPI support. Several board configurations are available; select the appropriate board in the "Select predefined board pinouts" menu in `menuconfig` and then wire the display and touchpad accordingly.
-
-## ESP32 Dev Board with 38 GPIOs
-
-![Example GUI with LittlevGL on ESP32](images/screenshot.jpg)
-
-### ILI9341 - HSPI
-<table>
-  <tr>
-    <th>MOSI</th>
-    <th>CLK</th>
-    <th>CS</th>
-    <th>DC</th>
-    <th>RST</th>
-    <th>BCKL</th>
-  </tr>
-  <tr>
-    <td>13</td>
-    <td>14</td>
-    <td>5</td>
-    <td>19</td>
-    <td>18</td>
-    <td>23</td>
-  </tr>
-</table>
-
-### XPT2046 - VSPI
-
-<table>
-  <tr>
-    <th>MOSI</th>
-    <th>MISO</th>
-    <th>CLK</th>
-    <th>CS</th>
-    <th>IRQ</th>
-  </tr>
-  <tr>
-    <td>32</td>
-    <td>35</td>
-    <td>26</td>
-    <td>33</td>
-    <td>25</td>
-  </tr>
-</table>
-
-## ESP32 DevKit v1 with 30 GPIOS
-
-There is another development kit with only 30 GPIOs available:
-
-![LittlevGL on ESP32 Kit with 30 GPIO](images/ESP32_DevkitV1_30_GPIO.png)
-
-### ILI9341
-
-For ILI9341 HSPI is used, modify the pin configuration in `components/drv/disp_spi.h` to:
-
-### ILI9341 - HSPI
-<table>
-  <tr>
-    <th>MOSI</th>
-    <th>CLK</th>
-    <th>CS</th>
-    <th>DC</th>
-    <th>RST</th>
-    <th>BCKL</th>
-  </tr>
-  <tr>
-    <td>13</td>
-    <td>14</td>
-    <td>15</td>
-    <td>2</td>
-    <td>4</td>
-    <td>21</td>
-  </tr>
-</table>
-
-### XPT2046 - VSPI
-
-<table>
-  <tr>
-    <th>MOSI</th>
-    <th>MISO</th>
-    <th>CLK</th>
-    <th>CS</th>
-    <th>IRQ</th>
-  </tr>
-  <tr>
-    <td>23</td>
-    <td>19</td>
-    <td>18</td>
-    <td>5</td>
-    <td>25</td>
-  </tr>
-</table>
-
-## ESP32 DevKit v4 with 38 GPIOS
-
-See this pdf for further information: https://www.espressif.com/sites/default/files/documentation/esp32-wroom-32d_esp32-wroom-32u_datasheet_en.pdf
-
-### ILI9341 - HSPI
-<table>
-<tr>
-<th>MOSI</th>
-<th>CLK</th>
-<th>CS</th>
-<th>DC</th>
-<th>RST</th>
-<th>BCKL</th>
-</tr>
-<tr>
-<td>13</td>
-<td>14</td>
-<td>15</td>
-<td>17</td>
-<td>25</td>
-<td>26</td>
-</tr>
-</table>
-
-### XPT2046 - VSPI
-
-<table>
-<tr>
-<th>MOSI</th>
-<th>MISO</th>
-<th>CLK</th>
-<th>CS</th>
-<th>IRQ</th>
-</tr>
-<tr>
-<td>23</td>
-<td>19</td>
-<td>18</td>
-<td>5</td>
-<td>27</td>
-</tr>
-</table>
-
-## Sparkfun ESP32 Thing Plus with Adafruit 3.5" 480x320 TFT Featherwing
-
-[Sparkfun ESP32 Thing Plus](https://www.sparkfun.com/products/15663)
-
-[Adafruit 3.5" 480x320 TFT Featherwing](https://www.adafruit.com/product/3651)
-
-![Sparkfun and Adafruit - together at last!](images/sparkfun_adafruit.png)
-
-The Adafruit Featherwing board uses a HX8357D TFT display controller and a STMPE610 resistive touch controller.  Both are hardwired to the same SPI bus necessitating the use of a mutex to prevent the display update from interrupting an access to the touch controller and confusing it.  The TFT reset and backlight pins are not connected (hardwired on the Featherwing).  There is no touchpad IRQ.  These signals are connected to unused signals in the following configuration.
-
-### HX8357D - VSPI
-<table>
-<tr>
-<th>MOSI</th>
-<th>CLK</th>
-<th>CS</th>
-<th>DC</th>
-<th>RST</th>
-<th>BCKL</th>
-</tr>
-<tr>
-<td>19</td>
-<td>5</td>
-<td>15</td>
-<td>33</td>
-<td>4</td>
-<td>2</td>
-</tr>
-</table>
-
-### STMPE610 - VSPI
-
-<table>
-<tr>
-<th>MOSI</th>
-<th>MISO</th>
-<th>CLK</th>
-<th>CS</th>
-<th>IRQ</th>
-</tr>
-<tr>
-<td>18</td>
-<td>19</td>
-<td>5</td>
-<td>32</td>
-<td>25</td>
-</tr>
-</table>
-
-## Other Boards
-
-Of course, all the individual pins can be configured in `menuconfig` if the available prefines don't match your board or project requirements. By default the prefined options are disabled and pin settings for the 30 pin dev board are defaulted.
+Contact the author -- dan@danjuliodesigns.com
