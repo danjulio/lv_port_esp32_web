@@ -97,6 +97,8 @@ You should see a new WiFi appear with an SSID of `web_lvgl`.  Connect to this (d
 
 * The way to improve performance is to reduce the amount of redrawing LittleVGL has to do.  8-bit pixels are the fastest but limit you to 256 colors.  16-bit pixels, typically used with low-cost LCD displays, are a bit slower but present a good visual image.  32-bit pixels are possible but you want to eliminate backgrounds and things like animations that cause LittleVGL to have to refresh large portions of the screen at a time.
 
+* Input handling on mobile devices is currently a little wonky, no doubt because of my inexperience with javascript/mobile.  There are conflicts between the browsers page scrolling and the ability to detect movement with touch.  Buttons work ok because touch/release occur but LittleVGL gestures are problematic.  It works sometimes if you hold your finger down for more than 0.3 second before starting the gesture.
+
 ## Questions?
 
 Contact the author -- dan@danjuliodesigns.com
