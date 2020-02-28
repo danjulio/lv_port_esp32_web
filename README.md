@@ -50,7 +50,9 @@ You should see a new WiFi appear with an SSID of `web_lvgl`.  Connect to this (d
 ## Project notes
 * The driver is contained in `components/lvgl_esp32_drivers/websocket_driver`.
 
-* The webpage `index.html` and a favicon are stored as binary objects in the program and served to requesting browsers from the driver.  See the `component.mk` and `CMakeLists.txt` files in the driver sub-directory.  The webpage is simply a carrier for the javascript that unpacks pixel data for the canvas and packs input events for the driver.
+![Websocket Driver Architecture](images/lvgl_websocket_arch.png)
+
+* The webpage `index.html` and a favicon (`favicon.ico`) are stored as binary objects in the program and served to requesting browsers from the driver.  See the `component.mk` and `CMakeLists.txt` files in the driver sub-directory.  The webpage is simply a carrier for the javascript that unpacks pixel data for the canvas and packs input events for the driver.
 
 * The project makes use of a modified copy of Blake Felt's [ESP32 Websocket](https://github.com/Molorius/esp32-websocket).  Many thanks to Blake, not only for his code but for some of the cool techniques he used.  To improve performance (eliminating data copies) I wrote my own binary websocket send function.  To do this I needed access to some variables in his websocket server so I changed those from static to publicly visible.  I also wrote the missing binary websocket send functions in his header file but ended up not using them.
 
